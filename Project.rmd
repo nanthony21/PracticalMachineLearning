@@ -1,0 +1,159 @@
+---
+title: "Activity Prediction"
+author: "Nick Anthony"
+date: "April 9, 2018"
+output: html_document
+---
+
+> **Background**
+
+> Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+# Prepare the datasets
+
+Read test and training data into a dataframe.
+
+```{r}
+train <- read.csv('pml-training.csv')
+test <- read.csv('pml-testing.csv')
+```
+
+Many of our columns are almost entirely empty or nan. Let's discard any column with missing values.
+```{r}
+missing <- sapply(test, function (x) any(is.na(x) | x == ""))
+keep <- !missing
+predCandidates <- names(missing)[keep]
+predCandidates <- predCandidates[-c(1,2,3,4,5,6,7,60)] #get rid of the troublesome variables. These will cause terrible overfitting
+train <- train[c("classe",predCandidates)] #keep the classe variable
+test <- test[predCandidates]
+```
+
+Factorize `classe`.
+
+```{r}
+train$classe = factor(train$classe)
+```
+
+
+Split our training dataset into a 75% training and 25% verification set.
+
+```{r}
+require(caret)
+set.seed(1)
+inTrain <- createDataPartition(train$classe, p=0.75,list=FALSE)
+ttrain <- train[inTrain,]
+vtrain <- train[-inTrain,]
+```
+
+Preprocess the  variables.
+
+```{r}
+x <- ttrain[predCandidates]
+preProc <- preProcess(x)
+preProc
+xScaled <- predict(preProc, x)
+ttrainScaled <- data.frame(classe = ttrain$ classe, xScaled)
+```
+
+Apply the centering and scaling to the verification set.
+
+```{r}
+x <- vtrain[predCandidates]
+xScaled <- predict(preProc,x)
+vtrainScaled <- data.frame(classe = vtrain$classe, xScaled)
+```
+
+Check for near zero variance.
+
+```{r}
+var <- nearZeroVar(ttrainScaled, saveMetrics=TRUE)
+if (any(var$nzv)) var else message("No variables with near-zero-variance")
+```
+
+This serves as a good verification to know that our variables all have variance.
+
+
+
+# Train the prediction model
+
+We will use random forest as our prediction model.
+Error can be estimated using our verification sample.
+
+
+Run in parallel to save time.
+
+```{r}
+require(parallel)
+require(doParallel)
+p <- makeCluster(detectCores() - 1)
+registerDoParallel(p)
+```
+
+Set the control parameters.
+
+```{r}
+cont <- trainControl(classProbs=TRUE,
+                     savePredictions=TRUE,
+                     allowParallel=TRUE)
+```
+
+Fit model.
+Warning: This can take a long time
+```{r, cache=TRUE}
+myModel <- train(classe ~ ., data=ttrainScaled, method='rf')
+stopCluster(p)
+```
+
+## Check the model on the training data
+
+```{r}
+myModel
+hat <- predict(myModel, ttrainScaled)
+confusionMatrix(hat, ttrain$classe)
+```
+
+## Check the fit on the verification data
+It is no surprise that our model worked well on the training data, let's see how it does on data that it has never seen before.
+
+```{r}
+hat <- predict(myModel, vtrainScaled)
+confusionMatrix(hat, vtrain$classe)
+```
+
+**The error rate is estimated as ~0.5%.**
+
+## Show the final model
+
+```{r finalModel}
+varImp(myModel)
+myModel$finalModel
+```
+
+
+
+Make sure to save the model we don't want to have to wait for training again.
+
+```{r}
+save(myModel, file="practicalMachineLearningModel.RData")
+```
+
+
+# Project Quiz
+### Predict on the test data
+
+Load model.
+
+```{r}
+load(file="practicalMachineLearningModel.RData", verbose=TRUE)
+```
+
+Get predictions and evaluate.
+
+```{r}
+testScaled <- predict(preProc, test[ predCandidates])
+hat <- predict(myModel,testScaled)
+hat
+#DTest <- cbind(hat , DTest)
+#subset(DTest, select=names(DTest)[grep("belt|[^(fore)]arm|dumbbell|forearm", names(DTest), invert=TRUE)])
+```
+**20/20!**
